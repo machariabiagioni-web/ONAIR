@@ -1,104 +1,71 @@
 let socket;
-let mediaRecorder;
+let audioContext;
+let processor;
 let currentChannel = "";
 const statusEl = document.getElementById('status');
 const pttBtn = document.getElementById('ptt-btn');
 
-// 1. Collegamento al server reale su Render
-socket = io("https://onair-server.onrender.com", {
-    reconnection: true,
-    reconnectionAttempts: 10,
-    reconnectionDelay: 2000
-}); 
+socket = io("https://onair-server.onrender.com", { reconnection: true });
 
-// Gestione stati del server
-socket.on("connect", () => {
-    statusEl.innerText = "CONNESSO AL SERVER";
-    statusEl.style.color = "#0f0";
-});
-
-socket.on("reconnecting", (attempt) => {
-    statusEl.innerText = "Sveglia server in corso... (tentativo " + attempt + ")";
-    statusEl.style.color = "#ffa500";
-});
-
-socket.on("disconnect", () => {
-    statusEl.innerText = "SCONNESSO - Riconnessione...";
-    statusEl.style.color = "#ff0000";
-});
+socket.on("connect", () => { statusEl.innerText = "CONNESSO"; statusEl.style.color = "#0f0"; });
 
 async function joinChannel() {
     currentChannel = document.getElementById('channel-input').value;
     if (!currentChannel) return alert("Scegli un canale!");
-    
     socket.emit("join-channel", currentChannel);
     document.getElementById('current-channel').innerText = currentChannel;
-    statusEl.innerText = "Online - Canale " + currentChannel;
     pttBtn.disabled = false;
+    // Inizializziamo l'audio context per la ricezione
+    audioContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
 }
 
-// 2. RICEZIONE OTTIMIZZATA: Gestisce meglio i frammenti per evitare blocchi
-socket.on("audio-stream", (blobData) => {
-    const audioBlob = new Blob([blobData], { type: 'audio/webm; codecs=opus' });
-    const audioUrl = URL.createObjectURL(audioBlob);
-    const audio = new Audio(audioUrl);
-
-    // Pulizia automatica della memoria quando il frammento finisce
-    audio.onended = () => {
-        URL.revokeObjectURL(audioUrl);
-        audio.remove();
-    };
-
-    audio.play().catch(e => {
-        // Se un pacchetto arriva male o troppo tardi, lo scartiamo senza bloccare tutto
-        console.log("Pacchetto scartato per mantenere il tempo reale");
-    });
+// RICEZIONE: Trasforma i dati grezzi in suono istantaneo
+socket.on("audio-stream", (audioData) => {
+    const float32Data = new Float32Array(audioData);
+    const buffer = audioContext.createBuffer(1, float32Data.length, 16000);
+    buffer.getChannelData(0).set(float32Data);
+    const source = audioContext.createBufferSource();
+    source.buffer = buffer;
+    source.connect(audioContext.destination);
+    source.start();
 });
 
-// 3. TRASMISSIONE: Pacchetti da 200ms (migliore per stabilità 4G)
 async function startTransmitting() {
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: { 
-                echoCancellation: true, 
-                noiseSuppression: true,
-                autoGainControl: true 
-            } 
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const source = audioContext.createMediaStreamSource(stream);
         
-        mediaRecorder = new MediaRecorder(stream);
+        // Creamo un processore che cattura ogni 4096 campioni (molto veloce)
+        processor = audioContext.createScriptProcessor(4096, 1, 1);
         
-        mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0 && socket.connected) {
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+
+        processor.onaudioprocess = (e) => {
+            if (socket.connected) {
+                const inputData = e.inputBuffer.getChannelData(0);
+                // Inviamo i dati grezzi (molto più stabili dei file)
                 socket.emit("audio-data", {
                     channel: currentChannel,
-                    blob: event.data
+                    blob: inputData.buffer
                 });
             }
         };
 
-        // 200ms è il compromesso ideale tra latenza e stabilità della connessione
-        mediaRecorder.start(200); 
-        statusEl.innerText = ">>> STAI PARLANDO <<<";
+        statusEl.innerText = ">>> TRASMISSIONE <<<";
         statusEl.style.color = "#ff0000";
-    } catch (err) {
-        alert("Accesso microfono negato o non disponibile!");
-    }
+    } catch (err) { alert("Errore microfono!"); }
 }
 
 function stopTransmitting() {
-    if (mediaRecorder && mediaRecorder.state !== "inactive") {
-        mediaRecorder.stop();
-        // Chiudiamo il microfono per risparmiare banda e batteria
-        mediaRecorder.stream.getTracks().forEach(t => t.stop());
+    if (processor) {
+        processor.disconnect();
+        processor.onaudioprocess = null;
+        processor = null;
     }
-    statusEl.innerText = "In ascolto su Canale " + currentChannel;
+    statusEl.innerText = "In ascolto...";
     statusEl.style.color = "#0f0";
 }
 
-// Gestione interazione Touch e Mouse
-pttBtn.onmousedown = pttBtn.ontouchstart = (e) => { 
-    if (e.type === 'touchstart') e.preventDefault(); 
-    startTransmitting(); 
-};
+pttBtn.onmousedown = pttBtn.ontouchstart = (e) => { if(e.type==='touchstart') e.preventDefault(); startTransmitting(); };
 pttBtn.onmouseup = pttBtn.ontouchend = stopTransmitting;
