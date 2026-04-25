@@ -1,64 +1,53 @@
-let peer = null;
-let currentCall = null;
-let localStream = null;
-const statusEl = document.getElementById('status');
+const socket = io("INSERISCI_URL_DEL_TUO_SERVER_QUI"); // Es: https://onair-server.onrender.com
+let mediaRecorder;
+let currentChannel = "";
 
 async function joinChannel() {
-    const channelId = document.getElementById('channel-input').value;
-    if (!channelId) return alert("Inserisci un numero!");
-
-    const role = confirm("OK per Utente A, ANNULLA per Utente B");
-    const myId = 'onair-' + channelId + (role ? '-A' : '-B');
-    window.partnerId = 'onair-' + channelId + (role ? '-B' : '-A');
-
-    // CONFIGURAZIONE AVANZATA: Usiamo i server di PeerJS che includono TURN
-    peer = new Peer(myId, {
-        debug: 3 // Ti mostra gli errori dettagliati in console
-    });
-
-    peer.on('open', (id) => {
-        statusEl.innerText = "Connesso come " + (role ? "A" : "B");
-        document.getElementById('ptt-btn').disabled = false;
-    });
-
-    peer.on('call', (call) => {
-        statusEl.innerText = "RICEZIONE IN CORSO...";
-        call.answer();
-        call.on('stream', (remoteStream) => {
-            const audio = new Audio();
-            audio.srcObject = remoteStream;
-            audio.play().catch(e => console.error("Errore autoplay:", e));
-        });
-    });
-
-    peer.on('error', (err) => {
-        statusEl.innerText = "Errore: " + err.type;
-        console.error(err);
-    });
+    currentChannel = document.getElementById('channel-input').value;
+    if (!currentChannel) return alert("Metti un numero!");
+    
+    socket.emit("join-channel", currentChannel);
+    document.getElementById('status').innerText = "Online - Canale " + currentChannel;
+    document.getElementById('ptt-btn').disabled = false;
 }
+
+// Ricezione: Quando il server ci manda l'audio di qualcun altro
+socket.on("audio-stream", (blobData) => {
+    const audioBlob = new Blob([blobData], { type: 'audio/webm; codecs=opus' });
+    const audioUrl = URL.createObjectURL(audioBlob);
+    const audio = new Audio(audioUrl);
+    audio.play();
+});
 
 async function startTransmitting() {
     try {
-        // Chiediamo il microfono con alta qualità per la tesi elettroacustica
-        localStream = await navigator.mediaDevices.getUserMedia({ 
-            audio: { echoCancellation: true, noiseSuppression: true } 
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Tagliamo l'audio in pezzi da 100ms per il Realtime
+        mediaRecorder = new MediaRecorder(stream);
         
-        statusEl.innerText = "TRASMISSIONE...";
-        currentCall = peer.call(window.partnerId, localStream);
-    } catch (err) {
-        statusEl.innerText = "Errore Microfono";
-    }
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                socket.emit("audio-data", {
+                    channel: currentChannel,
+                    blob: event.data
+                });
+            }
+        };
+
+        mediaRecorder.start(100); // Invia un pacchetto ogni 100ms
+        document.getElementById('status').innerText = "STAI PARLANDO...";
+    } catch (err) { alert("Errore microfono!"); }
 }
 
 function stopTransmitting() {
-    if (currentCall) currentCall.close();
-    if (localStream) {
-        localStream.getTracks().forEach(track => track.stop());
+    if (mediaRecorder) {
+        mediaRecorder.stop();
+        mediaRecorder.stream.getTracks().forEach(t => t.stop());
     }
-    statusEl.innerText = "In ascolto";
+    document.getElementById('status').innerText = "In ascolto...";
 }
 
-const ptt = document.getElementById('ptt-btn');
-ptt.onmousedown = ptt.ontouchstart = (e) => { e.preventDefault(); startTransmitting(); };
-ptt.onmouseup = ptt.ontouchend = stopTransmitting;
+// Eventi tasto
+const btn = document.getElementById('ptt-btn');
+btn.onmousedown = btn.ontouchstart = (e) => { e.preventDefault(); startTransmitting(); };
+btn.onmouseup = btn.ontouchend = stopTransmitting;
