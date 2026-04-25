@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ONAIR</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: sans-serif; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: #222; color: white; margin: 0; }
+        #status { margin-bottom: 20px; color: #0f0; }
+        #channel-info { font-size: 1.5rem; margin-bottom: 10px; }
+        #ptt-btn { 
+            width: 200px; height: 200px; border-radius: 50%; border: none;
+            background: #cc0000; color: white; font-weight: bold; font-size: 1.2rem;
+            cursor: pointer; box-shadow: 0 0 20px rgba(0,0,0,0.5); transition: 0.2s;
+            user-select: none; -webkit-tap-highlight-color: transparent;
+        }
+        #ptt-btn:active { background: #ff0000; transform: scale(0.95); box-shadow: 0 0 30px #ff0000; }
+        #ptt-btn:disabled { background: #555; cursor: not-allowed; }
+        input { padding: 10px; border-radius: 5px; border: none; margin-bottom: 10px; text-align: center; }
+    </style>
+</head>
+<body>
+
+    <div id="status">Inizializzazione...</div>
+    <div id="channel-info">Canale: <span id="current-channel">---</span></div>
+    
+    <input type="number" id="channel-input" placeholder="Inserisci numero canale">
+    <button onclick="joinChannel()">ENTRA NEL CANALE</button>
+    
+    <br><br>
+    <button id="ptt-btn" disabled>TIENI PREMUTO PER PARLARE</button>
+
+    <script src="app.js"></script>
+</body>
+</html>
