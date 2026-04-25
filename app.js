@@ -5,14 +5,13 @@ const statusEl = document.getElementById('status');
 const pttBtn = document.getElementById('ptt-btn');
 
 // 1. Collegamento al server reale su Render
-// Sostituito l'URL generico con quello del tuo server live
 socket = io("https://onair-server.onrender.com", {
     reconnection: true,
     reconnectionAttempts: 10,
     reconnectionDelay: 2000
 }); 
 
-// Gestione stati del server (utile per quando il server si deve "svegliare")
+// Gestione stati del server
 socket.on("connect", () => {
     statusEl.innerText = "CONNESSO AL SERVER";
     statusEl.style.color = "#0f0";
@@ -43,8 +42,6 @@ socket.on("audio-stream", (blobData) => {
     const audioBlob = new Blob([blobData], { type: 'audio/webm; codecs=opus' });
     const audioUrl = URL.createObjectURL(audioBlob);
     const audio = new Audio(audioUrl);
-    
-    // Boost del volume per facilitare l'udito (opzionale per la tesi)
     audio.play().catch(e => console.log("Errore riproduzione:", e));
 });
 
@@ -55,7 +52,7 @@ async function startTransmitting() {
             audio: { 
                 echoCancellation: true, 
                 noiseSuppression: true,
-                autoGainControl: true // Fondamentale per la tesi: stabilizza il volume
+                autoGainControl: true 
             } 
         });
         
@@ -89,7 +86,7 @@ function stopTransmitting() {
 
 // Gestione interazione Touch e Mouse
 pttBtn.onmousedown = pttBtn.ontouchstart = (e) => { 
-    if (e.type === 'touchstart') e.preventDefault(); // Evita zoom su mobile
+    if (e.type === 'touchstart') e.preventDefault(); 
     startTransmitting(); 
 };
 pttBtn.onmouseup = pttBtn.ontouchend = stopTransmitting;
