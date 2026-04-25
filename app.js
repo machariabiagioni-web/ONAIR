@@ -1,61 +1,64 @@
 let peer = null;
 let currentCall = null;
 let localStream = null;
-
-// Questi sono i "ponti" che usa anche WhatsApp per superare i firewall 4G
-const peerConfig = {
-    config: {
-        'iceServers': [
-            { url: 'stun:stun.l.google.com:19302' },
-            { url: 'stun:stun1.l.google.com:19302' },
-            { url: 'stun:stun2.l.google.com:19302' }
-        ]
-    }
-};
+const statusEl = document.getElementById('status');
 
 async function joinChannel() {
     const channelId = document.getElementById('channel-input').value;
     if (!channelId) return alert("Inserisci un numero!");
 
-    // Logica A/B per non far scontrare i due telefoni
-    const role = confirm("Premi OK se sei l'UTENTE A, ANNULLA se sei l'UTENTE B");
+    const role = confirm("OK per Utente A, ANNULLA per Utente B");
     const myId = 'onair-' + channelId + (role ? '-A' : '-B');
     window.partnerId = 'onair-' + channelId + (role ? '-B' : '-A');
 
-    // Creiamo il Peer con la configurazione per il 4G
-    peer = new Peer(myId, peerConfig);
+    // CONFIGURAZIONE AVANZATA: Usiamo i server di PeerJS che includono TURN
+    peer = new Peer(myId, {
+        debug: 3 // Ti mostra gli errori dettagliati in console
+    });
 
     peer.on('open', (id) => {
-        document.getElementById('status').innerText = "Online come " + (role ? "A" : "B");
+        statusEl.innerText = "Connesso come " + (role ? "A" : "B");
         document.getElementById('ptt-btn').disabled = false;
     });
 
     peer.on('call', (call) => {
+        statusEl.innerText = "RICEZIONE IN CORSO...";
         call.answer();
         call.on('stream', (remoteStream) => {
             const audio = new Audio();
             audio.srcObject = remoteStream;
-            audio.play();
+            audio.play().catch(e => console.error("Errore autoplay:", e));
         });
+    });
+
+    peer.on('error', (err) => {
+        statusEl.innerText = "Errore: " + err.type;
+        console.error(err);
     });
 }
 
 async function startTransmitting() {
     try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Chiamiamo l'altro utente sulla sua "porta" specifica
+        // Chiediamo il microfono con alta qualità per la tesi elettroacustica
+        localStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: { echoCancellation: true, noiseSuppression: true } 
+        });
+        
+        statusEl.innerText = "TRASMISSIONE...";
         currentCall = peer.call(window.partnerId, localStream);
-        document.getElementById('status').innerText = "TRASMISSIONE...";
-    } catch (err) { alert("Attiva il microfono!"); }
+    } catch (err) {
+        statusEl.innerText = "Errore Microfono";
+    }
 }
 
 function stopTransmitting() {
     if (currentCall) currentCall.close();
-    if (localStream) localStream.getTracks().forEach(t => t.stop());
-    document.getElementById('status').innerText = "In ascolto...";
+    if (localStream) {
+        localStream.getTracks().forEach(track => track.stop());
+    }
+    statusEl.innerText = "In ascolto";
 }
 
-// Collega i tasti (Mouse e Touch per cellulare)
-const btn = document.getElementById('ptt-btn');
-btn.onmousedown = btn.ontouchstart = (e) => { e.preventDefault(); startTransmitting(); };
-btn.onmouseup = btn.ontouchend = stopTransmitting;
+const ptt = document.getElementById('ptt-btn');
+ptt.onmousedown = ptt.ontouchstart = (e) => { e.preventDefault(); startTransmitting(); };
+ptt.onmouseup = ptt.ontouchend = stopTransmitting;
