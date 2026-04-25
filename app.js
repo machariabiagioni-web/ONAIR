@@ -4,11 +4,11 @@ let currentChannel = "";
 const statusEl = document.getElementById('status');
 const pttBtn = document.getElementById('ptt-btn');
 
-// Ci colleghiamo solo a Render (niente WebRTC complicato che il 4G blocca)
+// Colleghiamoci al server
 socket = io("https://onair-server.onrender.com");
 
 socket.on("connect", () => {
-    statusEl.innerText = "PRONTO (4G OPTIMIZED)";
+    statusEl.innerText = "SISTEMA PRONTO";
     statusEl.style.color = "#0f0";
 });
 
@@ -16,41 +16,48 @@ async function joinChannel() {
     currentChannel = document.getElementById('channel-input').value;
     if (!currentChannel) return alert("Scegli un canale!");
     socket.emit("join-channel", currentChannel);
-    document.getElementById('current-channel').innerText = currentChannel;
+    document.getElementById('current-channel').innerText = "Canale: " + currentChannel;
     pttBtn.disabled = false;
 }
 
-// RICEZIONE: Ogni pacchetto è un "messaggio web" standard
-socket.on("audio-stream", (blobData) => {
+// RICEZIONE
+socket.on("audio-stream", async (blobData) => {
+    // Trasformiamo i dati ricevuti in un oggetto audio
     const blob = new Blob([blobData], { type: 'audio/webm; codecs=opus' });
-    const audio = new Audio(URL.createObjectURL(blob));
-    audio.play().catch(() => {}); // Ignora errori se il pacchetto è corrotto
+    const audioUrl = URL.createObjectURL(blob);
+    const audio = new Audio(audioUrl);
+    
+    try {
+        await audio.play();
+        // Puliamo la memoria dopo 2 secondi
+        setTimeout(() => URL.revokeObjectURL(audioUrl), 2000);
+    } catch (e) {
+        console.log("Errore riproduzione (clicca sulla pagina per sbloccare l'audio)");
+    }
 });
 
+// TRASMISSIONE
 async function startTransmitting() {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Usiamo un bitrate bassissimo (6000) per farlo passare ovunque
-        mediaRecorder = new MediaRecorder(stream, { 
-            mimeType: 'audio/webm; codecs=opus',
-            audioBitsPerSecond: 6000 
-        });
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm; codecs=opus' });
 
-        mediaRecorder.ondataavailable = (e) => {
-            if (e.data.size > 0 && socket.connected) {
-                // Il server di Render farà da "ponte" per tutti
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0 && socket.connected) {
                 socket.emit("audio-data", {
                     channel: currentChannel,
-                    blob: e.data
+                    blob: event.data
                 });
             }
         };
 
-        // Mandiamo pacchetti ogni 300ms (stabilità massima)
-        mediaRecorder.start(300);
-        statusEl.innerText = ">>> TRASMETTENDO <<<";
-        statusEl.style.color = "#ff0000";
-    } catch (err) { alert("Errore Microfono!"); }
+        // Mandiamo pacchetti ogni 400ms (molto stabile)
+        mediaRecorder.start(400);
+        statusEl.innerText = ">>> TRASMISSIONE <<<";
+        statusEl.style.color = "#f00";
+    } catch (err) {
+        alert("Microfono non trovato o negato!");
+    }
 }
 
 function stopTransmitting() {
@@ -62,5 +69,9 @@ function stopTransmitting() {
     statusEl.style.color = "#0f0";
 }
 
-pttBtn.onmousedown = pttBtn.ontouchstart = (e) => { if(e.type==='touchstart') e.preventDefault(); startTransmitting(); };
+// Eventi pulsante
+pttBtn.onmousedown = pttBtn.ontouchstart = (e) => { 
+    if (e.type === 'touchstart') e.preventDefault();
+    startTransmitting(); 
+};
 pttBtn.onmouseup = pttBtn.ontouchend = stopTransmitting;
