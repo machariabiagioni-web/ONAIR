@@ -37,15 +37,25 @@ async function joinChannel() {
     pttBtn.disabled = false;
 }
 
-// 2. RICEZIONE: Il server rimbalza l'audio
+// 2. RICEZIONE OTTIMIZZATA: Gestisce meglio i frammenti per evitare blocchi
 socket.on("audio-stream", (blobData) => {
     const audioBlob = new Blob([blobData], { type: 'audio/webm; codecs=opus' });
     const audioUrl = URL.createObjectURL(audioBlob);
     const audio = new Audio(audioUrl);
-    audio.play().catch(e => console.log("Errore riproduzione:", e));
+
+    // Pulizia automatica della memoria quando il frammento finisce
+    audio.onended = () => {
+        URL.revokeObjectURL(audioUrl);
+        audio.remove();
+    };
+
+    audio.play().catch(e => {
+        // Se un pacchetto arriva male o troppo tardi, lo scartiamo senza bloccare tutto
+        console.log("Pacchetto scartato per mantenere il tempo reale");
+    });
 });
 
-// 3. TRASMISSIONE: Pacchetti da 100ms
+// 3. TRASMISSIONE: Pacchetti da 200ms (migliore per stabilità 4G)
 async function startTransmitting() {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
@@ -67,7 +77,8 @@ async function startTransmitting() {
             }
         };
 
-        mediaRecorder.start(100); 
+        // 200ms è il compromesso ideale tra latenza e stabilità della connessione
+        mediaRecorder.start(200); 
         statusEl.innerText = ">>> STAI PARLANDO <<<";
         statusEl.style.color = "#ff0000";
     } catch (err) {
@@ -78,6 +89,7 @@ async function startTransmitting() {
 function stopTransmitting() {
     if (mediaRecorder && mediaRecorder.state !== "inactive") {
         mediaRecorder.stop();
+        // Chiudiamo il microfono per risparmiare banda e batteria
         mediaRecorder.stream.getTracks().forEach(t => t.stop());
     }
     statusEl.innerText = "In ascolto su Canale " + currentChannel;
