@@ -4,11 +4,10 @@ let currentChannel = "";
 const statusEl = document.getElementById('status');
 const pttBtn = document.getElementById('ptt-btn');
 
-// 1. Collegamento al server
 socket = io("https://onair-server.onrender.com");
 
 socket.on("connect", () => {
-    statusEl.innerText = "CONNESSO AL SERVER";
+    statusEl.innerText = "SISTEMA PRONTO";
     statusEl.style.color = "#0f0";
 });
 
@@ -20,27 +19,31 @@ async function joinChannel() {
     pttBtn.disabled = false;
 }
 
-// 2. RICEZIONE: Usiamo un sistema di accodamento
-socket.on("audio-stream", (blobData) => {
-    const blob = new Blob([blobData], { type: 'audio/webm; codecs=opus' });
-    const url = URL.createObjectURL(blob);
-    const audio = new Audio(url);
-    
-    audio.play().then(() => {
-        // Pulizia immediata dopo la riproduzione
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
-    }).catch(e => console.log("Salto pacchetto..."));
+// RICEZIONE: Ogni pacchetto è un "proiettile" indipendente
+socket.on("audio-stream", async (blobData) => {
+    try {
+        const blob = new Blob([blobData], { type: 'audio/webm; codecs=opus' });
+        const audio = new Audio(URL.createObjectURL(blob));
+        // Forza la riproduzione immediata
+        await audio.play();
+    } catch (e) {
+        // Se un pacchetto fallisce, il sistema non si ferma!
+        console.log("Jitter rilevato, salto pacchetto...");
+    }
 });
 
-// 3. TRASMISSIONE: Il segreto è nel "Time Slice"
 async function startTransmitting() {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm; codecs=opus' });
         
+        // Specifichiamo una qualità bassa (8000 bps) per "bucare" il 4G
+        mediaRecorder = new MediaRecorder(stream, {
+            mimeType: 'audio/webm; codecs=opus',
+            audioBitsPerSecond: 8000 
+        });
+
         mediaRecorder.ondataavailable = (e) => {
             if (e.data.size > 0 && socket.connected) {
-                // Inviamo il blocco intero
                 socket.emit("audio-data", {
                     channel: currentChannel,
                     blob: e.data
@@ -48,26 +51,20 @@ async function startTransmitting() {
             }
         };
 
-        // TRUCCO: Invece di mandare tutto insieme alla fine, 
-        // mandiamo un blocco ogni 500ms (mezzo secondo)
-        mediaRecorder.start(500); 
-        
-        statusEl.innerText = ">>> PARLA ORA <<<";
-        statusEl.style.color = "#ff0000";
-    } catch (err) { alert("Microfono bloccato!"); }
+        // Mandiamo pezzi ogni 400ms: abbastanza veloci per il tempo reale, 
+        // abbastanza lenti per non intasare il server Render Free.
+        mediaRecorder.start(400); 
+        statusEl.innerText = "TRASMISSIONE ATTIVA";
+    } catch (err) { alert("Errore Microfono"); }
 }
 
 function stopTransmitting() {
-    if (mediaRecorder && mediaRecorder.state !== "inactive") {
+    if (mediaRecorder) {
         mediaRecorder.stop();
         mediaRecorder.stream.getTracks().forEach(t => t.stop());
     }
     statusEl.innerText = "In ascolto...";
-    statusEl.style.color = "#0f0";
 }
 
-pttBtn.onmousedown = pttBtn.ontouchstart = (e) => { 
-    if (e.type === 'touchstart') e.preventDefault(); 
-    startTransmitting(); 
-};
+pttBtn.onmousedown = pttBtn.ontouchstart = (e) => { if(e.type==='touchstart') e.preventDefault(); startTransmitting(); };
 pttBtn.onmouseup = pttBtn.ontouchend = stopTransmitting;
