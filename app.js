@@ -5,20 +5,29 @@ let currentChannel = "";
 const statusEl = document.getElementById('status');
 const pttBtn = document.getElementById('ptt-btn');
 
-// --- CONFIGURAZIONE VoIP PROFESSIONALE (Tuo account Metered) ---
+// --- CONFIGURAZIONE ICE SERVERS (Dati Metered corretti) ---
 const iceConfig = {
-    iceServers: [
-        { urls: "stun:stun.l.google.com:19302" }, 
-        { urls: "stun:openrelay.metered.ca:80" },
-        {
-            urls: "turn:openrelay.metered.ca:443", 
-            username: "038d70b4dbcba2d46bfb0cb8", 
-            credential: "iaqbMaOGxGFUmPJz"
-        }
-    ]
+  iceServers: [
+      { urls: "stun:stun.l.google.com:19302" }, // STUN di Google per sicurezza
+      { urls: "stun:stun.relay.metered.ca:80" },
+      {
+        urls: "turn:global.relay.metered.ca:80",
+        username: "038d70b4dbcba2d46bfb0cb8",
+        credential: "iaqbMoOGxGFUmPJz",
+      },
+      {
+        urls: "turn:global.relay.metered.ca:443",
+        username: "038d70b4dbcba2d46bfb0cb8",
+        credential: "iaqbMoOGxGFUmPJz",
+      },
+      {
+        urls: "turns:global.relay.metered.ca:443?transport=tcp",
+        username: "038d70b4dbcba2d46bfb0cb8",
+        credential: "iaqbMoOGxGFUmPJz",
+      }
+  ]
 };
 
-// 1. Collegamento al server di segnalazione su Render
 socket = io("https://onair-server.onrender.com"); 
 
 socket.on("connect", () => { 
@@ -34,9 +43,9 @@ async function joinChannel() {
     pttBtn.disabled = false;
 }
 
-// 2. LOGICA DI SEGNALAZIONE (WebRTC)
+// LOGICA DI SEGNALAZIONE
 socket.on("signal", async (data) => {
-    if (!peerConnection) startPeerConnection(false);
+    if (!peerConnection) await startPeerConnection(false);
 
     if (data.offer) {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.offer));
@@ -46,18 +55,26 @@ socket.on("signal", async (data) => {
     } else if (data.answer) {
         await peerConnection.setRemoteDescription(new RTCSessionDescription(data.answer));
     } else if (data.candidate) {
-        await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        try {
+            await peerConnection.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) { console.error("Errore candidato ICE", e); }
     }
 });
 
 async function startPeerConnection(isCaller) {
     peerConnection = new RTCPeerConnection(iceConfig);
 
-    // Quando riceviamo l'audio dall'altro telefono
+    // RICEZIONE AUDIO
     peerConnection.ontrack = (event) => {
-        const remoteAudio = new Audio();
+        // Creiamo un elemento audio al volo se non esiste
+        let remoteAudio = document.getElementById('remote-audio');
+        if (!remoteAudio) {
+            remoteAudio = document.createElement('audio');
+            remoteAudio.id = 'remote-audio';
+            remoteAudio.autoplay = true;
+            document.body.appendChild(remoteAudio);
+        }
         remoteAudio.srcObject = event.streams[0];
-        remoteAudio.play();
     };
 
     peerConnection.onicecandidate = (event) => {
@@ -79,7 +96,10 @@ async function startPeerConnection(isCaller) {
 
 async function startTransmitting() {
     try {
-        localStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Richiediamo il microfono prima di far partire la connessione
+        localStream = await navigator.mediaDevices.getUserMedia({ 
+            audio: { echoCancellation: true, noiseSuppression: true } 
+        });
         await startPeerConnection(true);
         statusEl.innerText = ">>> TRASMISSIONE ATTIVA <<<";
         statusEl.style.color = "#ff0000";
@@ -95,12 +115,12 @@ function stopTransmitting() {
     }
     if (localStream) {
         localStream.getTracks().forEach(track => track.stop());
+        localStream = null;
     }
     statusEl.innerText = "In ascolto su Canale " + currentChannel;
     statusEl.style.color = "#0f0";
 }
 
-// Supporto Touch per Mobile
 pttBtn.onmousedown = pttBtn.ontouchstart = (e) => { 
     if (e.type === 'touchstart') e.preventDefault(); 
     startTransmitting(); 
