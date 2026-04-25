@@ -1,32 +1,47 @@
-const socket = io("INSERISCI_URL_DEL_TUO_SERVER_QUI"); // Es: https://onair-server.onrender.com
+let socket;
 let mediaRecorder;
 let currentChannel = "";
+const statusEl = document.getElementById('status');
+const pttBtn = document.getElementById('ptt-btn');
+
+// 1. Collegamento al server (Sostituiremo l'URL dopo la creazione su Render)
+socket = io("https://onair-server-vostronome.onrender.com"); 
+
+socket.on("connect", () => {
+    statusEl.innerText = "Connesso al Server";
+});
 
 async function joinChannel() {
     currentChannel = document.getElementById('channel-input').value;
-    if (!currentChannel) return alert("Metti un numero!");
+    if (!currentChannel) return alert("Scegli un canale!");
     
     socket.emit("join-channel", currentChannel);
-    document.getElementById('status').innerText = "Online - Canale " + currentChannel;
-    document.getElementById('ptt-btn').disabled = false;
+    document.getElementById('current-channel').innerText = currentChannel;
+    statusEl.innerText = "Online - Canale " + currentChannel;
+    pttBtn.disabled = false;
 }
 
-// Ricezione: Quando il server ci manda l'audio di qualcun altro
+// 2. RICEZIONE: Il server ci "rimbalza" l'audio degli altri
 socket.on("audio-stream", (blobData) => {
+    // Riceviamo i dati grezzi e li trasformiamo in audio riproducibile
     const audioBlob = new Blob([blobData], { type: 'audio/webm; codecs=opus' });
     const audioUrl = URL.createObjectURL(audioBlob);
     const audio = new Audio(audioUrl);
-    audio.play();
+    audio.play().catch(e => console.log("Errore riproduzione:", e));
 });
 
+// 3. TRASMISSIONE: Catturiamo e inviamo pacchetti ogni 100ms
 async function startTransmitting() {
     try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Tagliamo l'audio in pezzi da 100ms per il Realtime
+        const stream = await navigator.mediaDevices.getUserMedia({ 
+            audio: { echoCancellation: true, noiseSuppression: true } 
+        });
+        
         mediaRecorder = new MediaRecorder(stream);
         
         mediaRecorder.ondataavailable = (event) => {
-            if (event.data.size > 0) {
+            if (event.data.size > 0 && socket.connected) {
+                // Inviamo il "pezzo" di audio al server con il numero del canale
                 socket.emit("audio-data", {
                     channel: currentChannel,
                     blob: event.data
@@ -34,20 +49,24 @@ async function startTransmitting() {
             }
         };
 
-        mediaRecorder.start(100); // Invia un pacchetto ogni 100ms
-        document.getElementById('status').innerText = "STAI PARLANDO...";
-    } catch (err) { alert("Errore microfono!"); }
+        // Invia pacchetti piccolissimi per evitare ritardi (100ms)
+        mediaRecorder.start(100); 
+        statusEl.innerText = ">>> TRASMISSIONE IN CORSO <<<";
+        statusEl.style.color = "#ff0000";
+    } catch (err) {
+        alert("Accesso microfono negato!");
+    }
 }
 
 function stopTransmitting() {
-    if (mediaRecorder) {
+    if (mediaRecorder && mediaRecorder.state !== "inactive") {
         mediaRecorder.stop();
         mediaRecorder.stream.getTracks().forEach(t => t.stop());
     }
-    document.getElementById('status').innerText = "In ascolto...";
+    statusEl.innerText = "Canale in ascolto...";
+    statusEl.style.color = "#0f0";
 }
 
-// Eventi tasto
-const btn = document.getElementById('ptt-btn');
-btn.onmousedown = btn.ontouchstart = (e) => { e.preventDefault(); startTransmitting(); };
-btn.onmouseup = btn.ontouchend = stopTransmitting;
+// Supporto sia per PC che per Telefono (Touch)
+pttBtn.onmousedown = pttBtn.ontouchstart = (e) => { e.preventDefault(); startTransmitting(); };
+pttBtn.onmouseup = pttBtn.ontouchend = stopTransmitting;
