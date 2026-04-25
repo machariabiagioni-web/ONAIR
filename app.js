@@ -4,11 +4,28 @@ let currentChannel = "";
 const statusEl = document.getElementById('status');
 const pttBtn = document.getElementById('ptt-btn');
 
-// 1. Collegamento al server (Sostituiremo l'URL dopo la creazione su Render)
-socket = io("https://onair-server-vostronome.onrender.com"); 
+// 1. Collegamento al server reale su Render
+// Sostituito l'URL generico con quello del tuo server live
+socket = io("https://onair-server.onrender.com", {
+    reconnection: true,
+    reconnectionAttempts: 10,
+    reconnectionDelay: 2000
+}); 
 
+// Gestione stati del server (utile per quando il server si deve "svegliare")
 socket.on("connect", () => {
-    statusEl.innerText = "Connesso al Server";
+    statusEl.innerText = "CONNESSO AL SERVER";
+    statusEl.style.color = "#0f0";
+});
+
+socket.on("reconnecting", (attempt) => {
+    statusEl.innerText = "Sveglia server in corso... (tentativo " + attempt + ")";
+    statusEl.style.color = "#ffa500";
+});
+
+socket.on("disconnect", () => {
+    statusEl.innerText = "SCONNESSO - Riconnessione...";
+    statusEl.style.color = "#ff0000";
 });
 
 async function joinChannel() {
@@ -21,27 +38,31 @@ async function joinChannel() {
     pttBtn.disabled = false;
 }
 
-// 2. RICEZIONE: Il server ci "rimbalza" l'audio degli altri
+// 2. RICEZIONE: Il server rimbalza l'audio
 socket.on("audio-stream", (blobData) => {
-    // Riceviamo i dati grezzi e li trasformiamo in audio riproducibile
     const audioBlob = new Blob([blobData], { type: 'audio/webm; codecs=opus' });
     const audioUrl = URL.createObjectURL(audioBlob);
     const audio = new Audio(audioUrl);
+    
+    // Boost del volume per facilitare l'udito (opzionale per la tesi)
     audio.play().catch(e => console.log("Errore riproduzione:", e));
 });
 
-// 3. TRASMISSIONE: Catturiamo e inviamo pacchetti ogni 100ms
+// 3. TRASMISSIONE: Pacchetti da 100ms
 async function startTransmitting() {
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ 
-            audio: { echoCancellation: true, noiseSuppression: true } 
+            audio: { 
+                echoCancellation: true, 
+                noiseSuppression: true,
+                autoGainControl: true // Fondamentale per la tesi: stabilizza il volume
+            } 
         });
         
         mediaRecorder = new MediaRecorder(stream);
         
         mediaRecorder.ondataavailable = (event) => {
             if (event.data.size > 0 && socket.connected) {
-                // Inviamo il "pezzo" di audio al server con il numero del canale
                 socket.emit("audio-data", {
                     channel: currentChannel,
                     blob: event.data
@@ -49,12 +70,11 @@ async function startTransmitting() {
             }
         };
 
-        // Invia pacchetti piccolissimi per evitare ritardi (100ms)
         mediaRecorder.start(100); 
-        statusEl.innerText = ">>> TRASMISSIONE IN CORSO <<<";
+        statusEl.innerText = ">>> STAI PARLANDO <<<";
         statusEl.style.color = "#ff0000";
     } catch (err) {
-        alert("Accesso microfono negato!");
+        alert("Accesso microfono negato o non disponibile!");
     }
 }
 
@@ -63,10 +83,13 @@ function stopTransmitting() {
         mediaRecorder.stop();
         mediaRecorder.stream.getTracks().forEach(t => t.stop());
     }
-    statusEl.innerText = "Canale in ascolto...";
+    statusEl.innerText = "In ascolto su Canale " + currentChannel;
     statusEl.style.color = "#0f0";
 }
 
-// Supporto sia per PC che per Telefono (Touch)
-pttBtn.onmousedown = pttBtn.ontouchstart = (e) => { e.preventDefault(); startTransmitting(); };
+// Gestione interazione Touch e Mouse
+pttBtn.onmousedown = pttBtn.ontouchstart = (e) => { 
+    if (e.type === 'touchstart') e.preventDefault(); // Evita zoom su mobile
+    startTransmitting(); 
+};
 pttBtn.onmouseup = pttBtn.ontouchend = stopTransmitting;
